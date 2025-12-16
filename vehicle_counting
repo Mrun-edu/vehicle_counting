@@ -1,0 +1,80 @@
+import cv2
+import numpy as np
+from ultralytics import YOLO
+from google.colab.patches import cv2_imshow
+
+# 1. Kendi Modelini Yükle
+# 'best.pt' dosyasının Colab'in solundaki dosya bölümünde olduğundan emin ol.
+model = YOLO('best.pt')
+
+# 2. Videoyu Aç
+video_path = "traffic2.mp4"  # Buraya yüklediğin videonun tam adını yaz
+cap = cv2.VideoCapture(video_path)
+
+# Video özelliklerini al
+w, h, fps = (int(cap.get(x)) for x in (cv2.CAP_PROP_FRAME_WIDTH, cv2.CAP_PROP_FRAME_HEIGHT, cv2.CAP_PROP_FPS))
+
+# Sonuç videosunu kaydetmek için ayarlar
+out = cv2.VideoWriter('sonuc_videosu.avi', cv2.VideoWriter_fourcc(*'MJPG'), fps, (w, h))
+
+# 3. Sayma Çizgisinin Konumu
+# Çizgiyi videonun alt kısmına yakın bir yere koyuyoruz
+line_position = int(h * 0.6)
+offset = 10 # Çizgiye ne kadar yaklaşınca sayılsın (piksel hassasiyeti)
+
+# Sayaçlar
+counter = 0
+counted_ids = [] # Aynı aracı tekrar saymamak için hafıza
+
+print("Video işleniyor... Lütfen bekleyin.")
+
+while cap.isOpened():
+    ret, frame = cap.read()
+    if not ret:
+        break
+
+    # 4. Tespit ve Takip (Tracking)
+    # classes filtresini kaldırdık, modelin ne tanıyorsa onu sayacak.
+    results = model.track(frame, persist=True, verbose=False)
+
+    if results[0].boxes.id is not None:
+        boxes = results[0].boxes.xyxy.cpu()
+        track_ids = results[0].boxes.id.int().cpu().tolist()
+
+        # Sınıf isimlerini (araba, kamyon vs.) modelden al
+        class_indices = results[0].boxes.cls.int().cpu().tolist()
+        names = model.names
+
+        for box, track_id, cls_idx in zip(boxes, track_ids, class_indices):
+            x1, y1, x2, y2 = box
+            cx = int((x1 + x2) / 2)
+            cy = int((y1 + y2) / 2) # Aracın merkez noktası
+
+            # Aracın üzerine sınıfını yaz (Opsiyonel görselleştirme)
+            class_name = names[cls_idx]
+
+            # Sayma Mantığı
+            if (line_position - offset) < cy < (line_position + offset):
+                if track_id not in counted_ids:
+                    counter += 1
+                    counted_ids.append(track_id)
+                    # Sayıldığında çizgi rengini yeşil yap
+                    cv2.line(frame, (0, line_position), (w, line_position), (0, 255, 0), 3)
+
+            # Görselleştirme: Kutu ve Merkez Nokta
+            cv2.rectangle(frame, (int(x1), int(y1)), (int(x2), int(y2)), (255, 0, 0), 2)
+            cv2.circle(frame, (cx, cy), 4, (0, 0, 255), -1)
+            cv2.putText(frame, f"{class_name}-{track_id}", (int(x1), int(y1)-10),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+    # Çizgiyi ve Sayacı Ekrana Sabit Yazdır
+    cv2.line(frame, (0, line_position), (w, line_position), (0, 0, 255), 2) # Kırmızı Referans Çizgisi
+    cv2.putText(frame, f"Toplam Arac: {counter}", (30, 50), cv2.FONT_HERSHEY_SIMPLEX, 1.2, (0, 255, 255), 3)
+
+    # Kareyi kaydet
+    out.write(frame)
+
+cap.release()
+out.release()
+print(f"İşlem tamamlandı! Toplam Sayılan Araç: {counter}")
+print("Sol taraftaki dosyalardan 'sonuc_videosu.avi' dosyasını indirip izleyebilirsin.")
